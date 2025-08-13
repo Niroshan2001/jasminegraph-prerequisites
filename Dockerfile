@@ -6,7 +6,7 @@ RUN apt-get install --no-install-recommends -y apt-transport-https
 RUN apt-get update
 RUN apt-get install --no-install-recommends -y curl gnupg2 ca-certificates software-properties-common nlohmann-json3-dev
 
-RUN apt-get update && apt-get install --no-install-recommends -y git cmake build-essential sqlite3 libsqlite3-dev libssl-dev librdkafka-dev libboost-all-dev libtool libxerces-c-dev libflatbuffers-dev libjsoncpp-dev libspdlog-dev pigz libcurl4-openssl-dev uncrustify libyaml-cpp-dev libprotobuf-dev protobuf-compiler libxml2-dev libkrb5-dev uuid-dev libgsasl7-dev && apt-get clean && rm -rf /var/lib/apt/lists/*
+RUN apt-get update && apt-get install --no-install-recommends -y git cmake build-essential sqlite3 libsqlite3-dev libssl-dev librdkafka-dev libboost-all-dev libtool libxerces-c-dev libflatbuffers-dev libjsoncpp-dev libspdlog-dev pigz libcurl4-openssl-dev uncrustify libyaml-cpp-dev libprotobuf-dev protobuf-compiler libxml2-dev libkrb5-dev uuid-dev libgsasl7-dev libgrpc++-dev libgrpc-dev libc-ares-dev sysstat nmon && apt-get clean && rm -rf /var/lib/apt/lists/*
 
 RUN add-apt-repository ppa:deadsnakes/ppa
 RUN apt-get install --no-install-recommends -y python3.8-dev python3-pip python3.8-distutils
@@ -31,6 +31,21 @@ RUN git clone --single-branch --depth 1 --branch v4.2-stable https://libwebsocke
 RUN git clone --single-branch --depth 1 --branch release/0.2.5 https://github.com/yaml/libyaml
 RUN git clone --single-branch --depth 1 --branch v4.11.1 https://github.com/antlr/antlr4.git
 RUN git clone --single-branch --depth 1 https://github.com/erikmuttersbach/libhdfs3.git
+
+RUN git clone --recurse-submodules https://github.com/open-telemetry/opentelemetry-cpp.git
+WORKDIR /home/ubuntu/software/opentelemetry-cpp
+RUN mkdir build && cd build && \
+    cmake -DWITH_PROMETHEUS=ON \
+          -DWITH_OTLP=ON \
+          -DWITH_OTLP_GRPC=ON \
+          -DWITH_OTLP_HTTP=ON \
+          -DBUILD_TESTING=OFF \
+          -DWITH_EXAMPLES=OFF \
+          -DCMAKE_INSTALL_PREFIX=/usr/local \
+          .. && \
+    make -j$(nproc) && \
+    make install && \
+    ldconfig
 
 WORKDIR /home/ubuntu/software/METIS
 RUN git submodule update --init
