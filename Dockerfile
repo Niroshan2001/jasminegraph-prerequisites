@@ -16,7 +16,7 @@ RUN python3.8 -m pip cache purge
 
 # Build and install OpenTelemetry C++ SDK with exporters
 WORKDIR /tmp
-RUN git clone --branch v1.16.1 --recurse-submodules https://github.com/open-telemetry/opentelemetry-cpp.git
+RUN git clone --branch v1.16.1 --recurse-submodules --depth 1 https://github.com/open-telemetry/opentelemetry-cpp.git
 WORKDIR /tmp/opentelemetry-cpp
 RUN mkdir build && cd build && \
     cmake -DWITH_PROMETHEUS=ON \
@@ -24,12 +24,26 @@ RUN mkdir build && cd build && \
           -DWITH_OTLP_HTTP=ON \
           -DBUILD_TESTING=OFF \
           -DWITH_EXAMPLES=OFF \
+          -DWITH_BENCHMARK=OFF \
+          -DWITH_LOGS_PREVIEW=OFF \
+          -DWITH_ZIPKIN=OFF \
+          -DWITH_JAEGER=OFF \
+          -DWITH_ETW=OFF \
+          -DWITH_ELASTICSEARCH=OFF \
+          -DWITH_METRICS_EXEMPLAR_PREVIEW=OFF \
+          -DWITH_ASYNC_EXPORT_PREVIEW=OFF \
+          -DCMAKE_BUILD_TYPE=MinSizeRel \
           -DCMAKE_INSTALL_PREFIX=/usr/local \
+          -DCMAKE_CXX_FLAGS="-Os" \
           .. && \
     make -j$(nproc) && \
     make install && \
-    ldconfig \
-    && cd / && rm -rf /tmp/opentelemetry-cpp
+    ldconfig && \
+    cd / && rm -rf /tmp/opentelemetry-cpp
+
+# Strip debug symbols from OpenTelemetry libraries to reduce size
+RUN find /usr/local/lib -name "libopentelemetry*.so*" -exec strip --strip-unneeded {} \; 2>/dev/null || true
+RUN find /usr/local/lib -name "libopentelemetry*.a" -exec strip --strip-debug {} \; 2>/dev/null || true
 
 # Set environment variables to help CMake find OpenTelemetry
 ENV PKG_CONFIG_PATH="/usr/local/lib/pkgconfig:$PKG_CONFIG_PATH"
@@ -58,8 +72,6 @@ RUN git submodule update --init
 RUN find . -type f -print0 | xargs -0 sed -i '/-march=native/d'
 RUN make config shared=1 cc=gcc prefix=/usr/local
 RUN make install
-
-
 
 RUN mkdir /home/ubuntu/software/cppkafka/build
 WORKDIR /home/ubuntu/software/cppkafka/build
@@ -118,7 +130,7 @@ RUN mkdir build && cd build \
  && make -j$(nproc) \
  && make install
 
- RUN apt-get purge -y --autoremove git
+RUN apt-get purge -y --autoremove git
 RUN rm -rf /home/ubuntu/software/*
 
 WORKDIR /home/ubuntu/software/code
