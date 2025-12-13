@@ -1,135 +1,182 @@
 FROM ubuntu:jammy
 ENV DEBIAN_FRONTEND noninteractive
 
-RUN apt-get update
-RUN apt-get install --no-install-recommends -y apt-transport-https
-RUN apt-get update
-RUN apt-get install --no-install-recommends -y curl gnupg2 ca-certificates software-properties-common nlohmann-json3-dev
+RUN apt-get update && \
+    apt-get install --no-install-recommends -y apt-transport-https && \
+    apt-get update && \
+    apt-get install --no-install-recommends -y curl gnupg2 ca-certificates software-properties-common nlohmann-json3-dev && \
+    rm -rf /var/lib/apt/lists/*
 
-RUN apt-get update && apt-get install --no-install-recommends -y git cmake build-essential sqlite3 libsqlite3-dev libssl-dev librdkafka-dev libboost-all-dev libtool libxerces-c-dev libflatbuffers-dev libjsoncpp-dev libspdlog-dev pigz libcurl4-openssl-dev uncrustify libyaml-cpp-dev libprotobuf-dev protobuf-compiler libxml2-dev libkrb5-dev uuid-dev libgsasl7-dev libgrpc++-dev libgrpc-dev pkg-config libc-ares-dev libre2-dev libabsl-dev  libopenblas-dev libomp-dev libgflags-dev && apt-get clean && rm -rf /var/lib/apt/lists/*
+RUN apt-get update && apt-get install --no-install-recommends -y git cmake build-essential sqlite3 libsqlite3-dev libssl-dev librdkafka-dev libboost-all-dev libtool libxerces-c-dev libflatbuffers-dev libjsoncpp-dev libspdlog-dev pigz libcurl4-openssl-dev uncrustify libyaml-cpp-dev libprotobuf-dev protobuf-compiler libxml2-dev libkrb5-dev uuid-dev libgsasl7-dev libgrpc++-dev libgrpc-dev pkg-config libc-ares-dev libre2-dev libabsl-dev libopenblas-dev libomp-dev libgflags-dev && apt-get clean && rm -rf /var/lib/apt/lists/*
 
-RUN add-apt-repository ppa:deadsnakes/ppa
-RUN apt-get install --no-install-recommends -y python3.8-dev python3-pip python3.8-distutils
-RUN python3.8 -m pip install stellargraph
-RUN python3.8 -m pip install chardet scikit-learn joblib threadpoolctl pandas
-RUN python3.8 -m pip cache purge
+RUN add-apt-repository ppa:deadsnakes/ppa && \
+    apt-get install --no-install-recommends -y python3.8-dev python3-pip python3.8-distutils && \
+    python3.8 -m pip install --no-cache-dir stellargraph chardet scikit-learn joblib threadpoolctl pandas && \
+    rm -rf /root/.cache/pip
 
-# Build and install OpenTelemetry C++ SDK with exporters
+# Build and install OpenTelemetry C++ SDK with minimal configuration
 WORKDIR /tmp
-RUN git clone --branch v1.16.1 --recurse-submodules https://github.com/open-telemetry/opentelemetry-cpp.git
-WORKDIR /tmp/opentelemetry-cpp
-RUN mkdir build && cd build && \
+RUN git clone --branch v1.16.1 --recurse-submodules --depth 1 https://github.com/open-telemetry/opentelemetry-cpp.git && \
+    cd opentelemetry-cpp && mkdir build && cd build && \
     cmake -DWITH_PROMETHEUS=ON \
           -DWITH_OTLP_GRPC=OFF \
           -DWITH_OTLP_HTTP=ON \
           -DBUILD_TESTING=OFF \
           -DWITH_EXAMPLES=OFF \
+          -DWITH_BENCHMARK=OFF \
+          -DWITH_LOGS_PREVIEW=OFF \
+          -DWITH_ZIPKIN=OFF \
+          -DWITH_JAEGER=OFF \
+          -DWITH_ETW=OFF \
+          -DWITH_ELASTICSEARCH=OFF \
+          -DWITH_METRICS_EXEMPLAR_PREVIEW=OFF \
+          -DWITH_ASYNC_EXPORT_PREVIEW=OFF \
+          -DCMAKE_BUILD_TYPE=MinSizeRel \
           -DCMAKE_INSTALL_PREFIX=/usr/local \
+          -DCMAKE_CXX_FLAGS="-Os" \
           .. && \
     make -j$(nproc) && \
     make install && \
-    ldconfig \
-    && cd / && rm -rf /tmp/opentelemetry-cpp
+    ldconfig && \
+    cd / && rm -rf /tmp/opentelemetry-cpp
+
+# Strip debug symbols from OpenTelemetry libraries to reduce size
+RUN find /usr/local/lib -name "libopentelemetry*.so*" -exec strip --strip-unneeded {} \; 2>/dev/null || true
+RUN find /usr/local/lib -name "libopentelemetry*.a" -exec strip --strip-debug {} \; 2>/dev/null || true
 
 # Set environment variables to help CMake find OpenTelemetry
 ENV PKG_CONFIG_PATH="/usr/local/lib/pkgconfig:$PKG_CONFIG_PATH"
 ENV CMAKE_PREFIX_PATH="/usr/local:$CMAKE_PREFIX_PATH"
 
-RUN curl -fsSL https://download.docker.com/linux/debian/gpg | apt-key add -
-RUN add-apt-repository "deb [arch=amd64] https://download.docker.com/linux/ubuntu $(lsb_release -cs) stable"
-RUN apt-get update
-RUN apt-get install --no-install-recommends -y docker-ce-cli
-RUN rm -f /var/lib/apt/lists/* || echo "Some files were not deleted"
+SHELL ["/bin/bash", "-o", "pipefail", "-c"]
+RUN curl -fsSL https://download.docker.com/linux/debian/gpg | apt-key add - && \
+    add-apt-repository "deb [arch=amd64] https://download.docker.com/linux/ubuntu $(lsb_release -cs) stable" && \
+    apt-get update && \
+    (apt-cache madison docker-ce-cli && apt-get install --no-install-recommends -y docker-ce-cli=5:24.0.* || apt-get install --no-install-recommends -y docker-ce-cli) && \
+    rm -rf /var/lib/apt/lists/*
 
 WORKDIR /home/ubuntu
 RUN mkdir software
 WORKDIR /home/ubuntu/software
 
+# Build METIS and clean up after installation
 RUN git clone --single-branch --depth 1 --branch v5.1.1-DistDGL-v0.5 https://github.com/KarypisLab/METIS.git
-RUN git clone --single-branch --depth 1 --branch v0.4.1 https://github.com/mfontanini/cppkafka.git
-RUN git clone --single-branch --depth 1 --branch v0.11.0 https://github.com/kubernetes-client/c
-RUN git clone --single-branch --depth 1 --branch v4.2-stable https://libwebsockets.org/repo/libwebsockets
-RUN git clone --single-branch --depth 1 --branch release/0.2.5 https://github.com/yaml/libyaml
-RUN git clone --single-branch --depth 1 --branch v4.11.1 https://github.com/antlr/antlr4.git
-RUN git clone --single-branch --depth 1 https://github.com/miyurud/libhdfs3.git
-
 WORKDIR /home/ubuntu/software/METIS
-RUN git submodule update --init
-RUN find . -type f -print0 | xargs -0 sed -i '/-march=native/d'
-RUN make config shared=1 cc=gcc prefix=/usr/local
-RUN make install
+RUN git submodule update --init && \
+    find . -type f -print0 | xargs -0 sed -i '/-march=native/d' && \
+    make config shared=1 cc=gcc prefix=/usr/local && \
+    make install
+WORKDIR /home/ubuntu/software
+RUN rm -rf METIS
 
-
-
-RUN mkdir /home/ubuntu/software/cppkafka/build
+# Build cppkafka and clean up after installation
+RUN git clone --single-branch --depth 1 --branch v0.4.1 https://github.com/mfontanini/cppkafka.git && \
+    mkdir cppkafka/build
 WORKDIR /home/ubuntu/software/cppkafka/build
-RUN cmake ..
-RUN make -j4
-RUN make install
+RUN cmake .. && \
+    make -j4 && \
+    make install
+WORKDIR /home/ubuntu/software
+RUN rm -rf cppkafka
 
-RUN mkdir /home/ubuntu/software/libwebsockets/build
+# Build libwebsockets and clean up after installation
+RUN git clone --single-branch --depth 1 --branch v4.2-stable https://libwebsockets.org/repo/libwebsockets && \
+    mkdir libwebsockets/build
 WORKDIR /home/ubuntu/software/libwebsockets/build
 RUN cmake -DLWS_WITHOUT_TESTAPPS=ON -DLWS_WITHOUT_TEST_SERVER=ON -DLWS_WITHOUT_TEST_SERVER_EXTPOLL=ON \
-      -DLWS_WITHOUT_TEST_PING=ON -DLWS_WITHOUT_TEST_CLIENT=ON -DCMAKE_C_FLAGS="-fpic" -DCMAKE_INSTALL_PREFIX=/usr/local ..
-RUN make
-RUN make install
+          -DLWS_WITHOUT_TEST_PING=ON -DLWS_WITHOUT_TEST_CLIENT=ON -DCMAKE_C_FLAGS="-fpic" -DCMAKE_INSTALL_PREFIX=/usr/local .. && \
+    make && \
+    make install
+WORKDIR /home/ubuntu/software
+RUN rm -rf libwebsockets
 
-RUN mkdir /home/ubuntu/software/libyaml/build
+# Build libyaml and clean up after installation
+RUN git clone --single-branch --depth 1 --branch release/0.2.5 https://github.com/yaml/libyaml && \
+    mkdir libyaml/build
 WORKDIR /home/ubuntu/software/libyaml/build
-RUN cmake -DCMAKE_INSTALL_PREFIX=/usr/local -DBUILD_TESTING=OFF  -DBUILD_SHARED_LIBS=ON ..
-RUN make
-RUN make install
+RUN cmake -DCMAKE_INSTALL_PREFIX=/usr/local -DBUILD_TESTING=OFF -DBUILD_SHARED_LIBS=ON .. && \
+    make && \
+    make install
+WORKDIR /home/ubuntu/software
+RUN rm -rf libyaml
 
-RUN mkdir /home/ubuntu/software/c/kubernetes/build
+# Build Kubernetes C client and clean up after installation
+RUN git clone --single-branch --depth 1 --branch v0.11.0 https://github.com/kubernetes-client/c && \
+    mkdir -p c/kubernetes/build
 WORKDIR /home/ubuntu/software/c/kubernetes/build
-RUN cmake -DCMAKE_INSTALL_PREFIX=/usr/local ..
-RUN make
-RUN make install
-
+RUN cmake -DCMAKE_INSTALL_PREFIX=/usr/local .. && \
+    make && \
+    make install
 WORKDIR /home/ubuntu/software
-WORKDIR /home/ubuntu/software/antlr4/runtime/Cpp
-RUN mkdir /home/ubuntu/software/antlr4/runtime/Cpp/build
+RUN rm -rf c
+
+# Build ANTLR4 C++ runtime and clean up after installation
+RUN git clone --single-branch --depth 1 --branch v4.11.1 https://github.com/antlr/antlr4.git && \
+    mkdir -p antlr4/runtime/Cpp/build
 WORKDIR /home/ubuntu/software/antlr4/runtime/Cpp/build
-RUN cmake ..
-RUN make install
+RUN cmake .. && \
+    make install
+WORKDIR /home/ubuntu/software
+RUN rm -rf antlr4
 
-RUN mkdir /home/ubuntu/software/libhdfs3/build
+# Build libhdfs3 and clean up after installation
+RUN git clone --single-branch --depth 1 https://github.com/miyurud/libhdfs3.git && \
+    mkdir libhdfs3/build
 WORKDIR /home/ubuntu/software/libhdfs3/build
-RUN ../bootstrap --prefix=/usr/local/libhdfs3
-RUN make -j8
-RUN make install
+RUN ../bootstrap --prefix=/usr/local/libhdfs3 && \
+    make -j8 && \
+    make install
+WORKDIR /home/ubuntu/software
+RUN rm -rf libhdfs3
 
-RUN curl -L https://github.com/Kitware/CMake/releases/download/v3.29.6/cmake-3.29.6.tar.gz \
-    -o cmake-3.29.6.tar.gz \
- && tar -zxvf cmake-3.29.6.tar.gz \
- && cd cmake-3.29.6 \
- && ./bootstrap \
- && make -j$(nproc) \
- && make install \
- && cd .. \
- && rm -rf cmake-3.29.6 cmake-3.29.6.tar.gz
+# Upgrade CMake and clean up after installation
+WORKDIR /tmp
+RUN curl -L https://github.com/Kitware/CMake/releases/download/v3.29.6/cmake-3.29.6.tar.gz -o cmake-3.29.6.tar.gz && \
+    tar -zxvf cmake-3.29.6.tar.gz
+WORKDIR /tmp/cmake-3.29.6
+RUN ./bootstrap && \
+    make -j"$(nproc)" && \
+    make install
+WORKDIR /home/ubuntu/software
+RUN rm -rf /tmp/cmake-3.29.6 /tmp/cmake-3.29.6.tar.gz
 
-WORKDIR /usr/local/lib
-RUN apt-get update && apt-get install --no-install-recommends -y git  libopenblas-dev libomp-dev libgflags-dev
-RUN git clone --depth=1 https://github.com/facebookresearch/faiss.git
-WORKDIR /usr/local/lib/faiss
-RUN mkdir build && cd build \
- && cmake -DFAISS_ENABLE_PYTHON=OFF -DFAISS_ENABLE_GPU=OFF .. \
- && make -j$(nproc) \
- && make install
+# Build FAISS and clean up after installation
+WORKDIR /tmp
+RUN apt-get update && apt-get install --no-install-recommends -y git libopenblas-dev libomp-dev libgflags-dev && \
+    rm -rf /var/lib/apt/lists/* && \
+    git clone --depth=1 https://github.com/facebookresearch/faiss.git && \
+    mkdir faiss/build
+WORKDIR /tmp/faiss/build
+RUN cmake -DFAISS_ENABLE_PYTHON=OFF -DFAISS_ENABLE_GPU=OFF .. && \
+    make -j"$(nproc)" && \
+    make install
+WORKDIR /home/ubuntu/software
+RUN rm -rf /tmp/faiss
 
- RUN apt-get purge -y --autoremove git
-RUN rm -rf /home/ubuntu/software/*
-
+# Generate ANTLR grammar files and clean up
+WORKDIR /home/ubuntu/software
+RUN mkdir -p code antlr
 WORKDIR /home/ubuntu/software/code
-RUN apt-get update && apt-get install --no-install-recommends -y default-jre
-RUN curl -O https://s3.amazonaws.com/artifacts.opencypher.org/M23/Cypher.g4
-RUN curl -O https://www.antlr.org/download/antlr-4.13.2-complete.jar
-RUN java -jar antlr-4.13.2-complete.jar -Dlanguage=Cpp -visitor Cypher.g4
-RUN apt-get purge default-jre -y
+RUN apt-get update && apt-get install --no-install-recommends -y default-jre && \
+    rm -rf /var/lib/apt/lists/* && \
+    curl -O https://s3.amazonaws.com/artifacts.opencypher.org/M23/Cypher.g4 && \
+    curl -O https://www.antlr.org/download/antlr-4.13.2-complete.jar && \
+    java -jar antlr-4.13.2-complete.jar -Dlanguage=Cpp -visitor Cypher.g4 && \
+    find . -maxdepth 1 \( -name '*.cpp' -o -name '*.h' \) -exec mv {} ../antlr/ \; && \
+    apt-get purge -y --autoremove default-jre && \
+    apt-get clean
+WORKDIR /home/ubuntu/software
+RUN rm -rf code
+
+# Final cleanup: Remove git and any remaining build artifacts
+RUN apt-get purge -y --autoremove git && \
+    apt-get clean && \
+    rm -rf /var/lib/apt/lists/* && \
+    rm -rf /tmp/* && \
+    rm -rf /root/.cache
+
+# Strip all installed libraries to reduce size further
+RUN find /usr/local/lib -type f -name "*.so*" -exec strip --strip-unneeded {} \; 2>/dev/null || true
+RUN find /usr/local/lib -type f -name "*.a" -exec strip --strip-debug {} \; 2>/dev/null || true
 
 WORKDIR /home/ubuntu/software
-RUN mkdir /home/ubuntu/software/antlr
-RUN mv /home/ubuntu/software/code/*.cpp /home/ubuntu/software/antlr
-RUN mv /home/ubuntu/software/code/*.h /home/ubuntu/software/antlr
-RUN rm -rf /home/ubuntu/software/code
