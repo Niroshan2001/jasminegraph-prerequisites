@@ -9,6 +9,18 @@ RUN apt-get update && \
 
 RUN apt-get update && apt-get install --no-install-recommends -y git cmake build-essential sqlite3 libsqlite3-dev libssl-dev librdkafka-dev libboost-all-dev libtool libxerces-c-dev libflatbuffers-dev libjsoncpp-dev libspdlog-dev pigz libcurl4-openssl-dev uncrustify libyaml-cpp-dev libprotobuf-dev protobuf-compiler libxml2-dev libkrb5-dev uuid-dev libgsasl7-dev libgrpc++-dev libgrpc-dev pkg-config libc-ares-dev libre2-dev libabsl-dev libopenblas-dev libomp-dev libgflags-dev && apt-get clean && rm -rf /var/lib/apt/lists/*
 
+# Build CRoaring and clean up after installation
+RUN apt-get update && apt-get install -y git cmake build-essential \
+    && cd /tmp \
+    && git clone --depth 1 https://github.com/RoaringBitmap/CRoaring.git \
+    && cd CRoaring \
+    && mkdir build && cd build \
+    && cmake -DENABLE_ROARING_TESTS=OFF .. \
+    && make -j$(nproc) \
+    && make install \
+    && ldconfig \
+    && cd / && rm -rf /tmp/CRoaring
+
 RUN add-apt-repository ppa:deadsnakes/ppa && \
     apt-get install --no-install-recommends -y python3.8-dev python3-pip python3.8-distutils && \
     python3.8 -m pip install --no-cache-dir stellargraph chardet scikit-learn joblib threadpoolctl pandas && \
